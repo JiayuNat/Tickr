@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tickr — Plain-English Equity Research</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js for the real multi-year trend charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          letterSpacing: { tighter: '-0.03em', tightest: '-0.04em' }
+        }
+      }
+    }
+  </script>
+  <style>
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #EAECEF;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .glass-card:hover {
+      transform: translateY(-2px);
+      border-color: #D3D7DF;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+    /* Terminal loader log */
+    #termLog { scroll-behavior: smooth; }
+    #termLog .ln { opacity: 0; animation: fadeLine .25s ease forwards; }
+    @keyframes fadeLine { to { opacity: 1; } }
+    .blink { animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+</head>
+<body class="bg-[#FAFAFA] text-[#0D0D0D] font-sans antialiased min-h-screen flex flex-col selection:bg-black selection:text-white">
+
+  <!-- Top Nav -->
+  <header class="border-b border-[#EAECEF] bg-white/80 backdrop-blur-md sticky top-0 z-30">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-10">
+        <div class="flex items-center space-x-2.5 cursor-pointer group">
+          <div class="w-7 h-7 rounded-lg bg-black text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+            <svg class="w-4 h-4 text-[#00C805]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+              <polyline points="16 7 22 7 22 13"></polyline>
+            </svg>
+          </div>
+          <span class="text-sm font-semibold tracking-tight text-black">Tickr</span>
+          <span class="text-[10px] tracking-wide font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">plain-English research</span>
+        </div>
+
+        <nav class="hidden md:flex items-center p-1 bg-[#F1F3F5] rounded-full border border-slate-200/50">
+          <button class="nav-tab active px-4 py-1 rounded-full text-xs font-medium text-black bg-white shadow-sm transition-all" data-target="tab-overview">The call</button>
+          <button class="nav-tab px-4 py-1 rounded-full text-xs font-medium text-slate-500 hover:text-black transition-all" data-target="tab-quality">Business &amp; 10-K</button>
+          <button class="nav-tab px-4 py-1 rounded-full text-xs font-medium text-slate-500 hover:text-black transition-all" data-target="tab-valuation">Valuation Desk</button>
+          <button class="nav-tab px-4 py-1 rounded-full text-xs font-medium text-slate-500 hover:text-black transition-all" data-target="tab-market">Market mood</button>
+        </nav>
+      </div>
+
+      <div class="flex items-center space-x-4">
+        <label class="flex items-center space-x-2 cursor-pointer text-xs text-slate-400 select-none hover:text-slate-600 transition">
+          <span class="text-[11px] font-mono">Demo mode</span>
+          <input type="checkbox" id="mockToggle" class="w-3.5 h-3.5 accent-black rounded cursor-pointer" checked />
+        </label>
+        <div class="h-4 w-[1px] bg-slate-200"></div>
+        <div class="flex items-center space-x-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="activeTickerBadge" class="text-xs font-mono font-medium text-slate-600">idle</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-10 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-10 w-full">
+
+    <!-- Left: the questions -->
+    <aside class="lg:col-span-4 space-y-5">
+      <div class="bg-white p-6 rounded-3xl border border-[#EAECEF] shadow-sm">
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-sm font-semibold text-black">Tell us about you</h2>
+          <span class="text-[10px] text-slate-400 font-mono">6 quick questions</span>
+        </div>
+
+        <form id="analyzeForm" class="space-y-4">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Which stock do you want checked?</label>
+            <div class="relative group">
+              <input type="text" id="ticker" value="NVDA" class="w-full px-4 py-3 bg-[#FBFBFC] text-base font-mono font-semibold uppercase border border-[#EAECEF] rounded-2xl focus:bg-white focus:border-black focus:ring-1 focus:ring-black focus:outline-none transition-all tracking-wider placeholder:text-slate-300 group-hover:border-slate-300" placeholder="e.g. NVDA" required />
+              <span class="absolute right-4 top-3.5 text-xs font-mono text-slate-400">US-listed</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">How long have you been investing?</label>
+            <select id="experience" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+              <option value="new">Less than 1 year</option>
+              <option value="some" selected>1 to 5 years</option>
+              <option value="experienced">More than 5 years</option>
+            </select>
+          </div>
+
+          <!-- Plain-language drawdown question (item 2) -->
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">If this stock dropped 25% in a month, what would you most likely do?</label>
+            <select id="drawdown_reaction" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+              <option value="buy_more">Buy more — it's cheaper now</option>
+              <option value="hold" selected>Hold and wait it out</option>
+              <option value="hold_uneasy">Hold, but lose some sleep over it</option>
+              <option value="sell">Sell to stop further losses</option>
+            </select>
+          </div>
+
+          <!-- Ownership / relationship question (item 1) -->
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">What's your relationship to this stock right now?</label>
+            <select id="ownership" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+              <option value="none" selected>I don't own it</option>
+              <option value="considering">I'm thinking of buying</option>
+              <option value="own">I already own it</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-500 mb-1">How long would you hold?</label>
+              <select id="horizon" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+                <option value="short">Under a year</option>
+                <option value="medium">1 to 5 years</option>
+                <option value="long" selected>5 years or more</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-500 mb-1">How big a bet, roughly?</label>
+              <select id="position_size" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+                <option value="small" selected>Small — under ~5%</option>
+                <option value="medium">Meaningful — 5% to 20%</option>
+                <option value="large">Large — over ~20%</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">What matters most to you here?</label>
+            <select id="goal" class="w-full px-3 py-2.5 text-xs font-medium border border-[#EAECEF] rounded-xl bg-[#FBFBFC] hover:bg-white focus:border-black focus:outline-none transition-all">
+              <option value="growth" selected>Growing my money over time</option>
+              <option value="income">Steady income / dividends</option>
+              <option value="understand">Just understanding the company</option>
+            </select>
+          </div>
+
+          <button type="submit" id="submitBtn" class="w-full py-3.5 px-4 bg-black hover:bg-[#1E1E1E] text-white font-medium rounded-2xl text-xs transition-all active:scale-[0.98] shadow-sm flex items-center justify-center space-x-2 cursor-pointer">
+            <span>Check this stock for me</span>
+            <span class="text-slate-400 font-mono">↵</span>
+          </button>
+        </form>
+      </div>
+
+      <div class="px-5 py-4 bg-white rounded-3xl border border-[#EAECEF] text-xs text-slate-500 leading-relaxed space-y-1">
+        <span class="font-semibold text-black block">How the call is made</span>
+        <p class="text-[11px]">
+          We check the business is healthy first. If it isn't, we won't call it a Buy — no matter how cheap it looks. That's how we avoid cheap stocks that are cheap for a bad reason.
+        </p>
+      </div>
+    </aside>
+
+    <!-- Right: results -->
+    <section class="lg:col-span-8 space-y-8">
+
+      <!-- Terminal-style streaming loader (item 8) -->
+      <div id="loadingComponent" class="hidden bg-[#0C0C0E] rounded-3xl border border-[#1c1c22] shadow-sm overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c22]">
+          <div class="flex items-center space-x-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#ff5f57]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[#febc2e]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></span>
+            <span class="ml-3 text-[11px] font-mono text-slate-500">agents running…</span>
+          </div>
+          <span id="loadingPercentage" class="font-mono text-xs text-slate-400">0%</span>
+        </div>
+        <div id="termLog" class="px-5 py-4 h-56 overflow-y-auto font-mono text-[12px] leading-relaxed text-slate-300 space-y-0.5"></div>
+        <div class="grid grid-cols-4 gap-2 px-5 py-3 border-t border-[#1c1c22] text-[10px] font-mono text-slate-500">
+          <div id="stage-1" class="pt-1 border-t border-slate-700 transition-colors">1 · Read 10-K</div>
+          <div id="stage-2" class="pt-1 border-t border-slate-700 transition-colors">2 · Crunch numbers</div>
+          <div id="stage-3" class="pt-1 border-t border-slate-700 transition-colors">3 · Market mood</div>
+          <div id="stage-4" class="pt-1 border-t border-slate-700 transition-colors">4 · Final call</div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="emptyView" class="p-16 text-center border border-dashed border-[#E0E3E8] rounded-3xl bg-white">
+        <div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3 text-xs font-mono text-slate-400">//</div>
+        <h3 class="text-sm font-semibold text-black">Pick a stock to get started</h3>
+        <p class="text-xs text-slate-400 mt-1 max-w-sm mx-auto">Enter a US-listed ticker on the left and we'll walk through it in plain English.</p>
+      </div>
+
+      <!-- Dashboard -->
+      <div id="dashboardView" class="hidden space-y-8">
+
+        <!-- Hero -->
+        <div class="flex items-baseline justify-between border-b border-[#EAECEF] pb-6">
+          <div>
+            <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+              <h1 id="heroTickerTitle" class="text-4xl font-extrabold tracking-tightest font-mono text-black">NVDA</h1>
+              <span id="heroVerdictBadge" class="text-xs font-bold font-mono px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/50">BUY</span>
+              <span id="heroConvictionBadge" class="text-xs font-mono text-slate-500 px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200/60">high confidence</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1.5 font-mono" id="heroFilingMeta">from the company's latest annual report (10-K)</p>
+          </div>
+          <div class="text-right">
+            <span class="text-[11px] font-mono text-slate-400 block">possible gain vs today's price</span>
+            <span id="heroUpsideValue" class="text-2xl font-bold font-mono text-emerald-600 tracking-tight">+24.2%</span>
+          </div>
+        </div>
+
+        <!-- 4 metric cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div class="glass-card p-5 rounded-2xl flex flex-col justify-between group cursor-pointer" onclick="openExplainer('margin')">
+            <div class="flex items-center justify-between">
+              <span class="flex flex-col"><span class="text-xs font-medium text-slate-600">Profit kept</span><span class="text-[10px] font-mono text-slate-400">Net margin</span></span>
+              <span class="w-4 h-4 rounded-full border border-slate-200 group-hover:border-black group-hover:bg-black group-hover:text-white text-slate-400 flex items-center justify-center text-[10px] font-mono transition-all">?</span>
+            </div>
+            <div class="my-3"><span class="text-2xl font-bold font-mono tracking-tight text-black" id="cardMarginValue">--</span></div>
+            <div class="text-[11px] text-slate-400 font-mono">of every $1 of sales</div>
+          </div>
+
+          <div class="glass-card p-5 rounded-2xl flex flex-col justify-between group cursor-pointer" onclick="openExplainer('roe')">
+            <div class="flex items-center justify-between">
+              <span class="flex flex-col"><span class="text-xs font-medium text-slate-600">Return on equity</span><span class="text-[10px] font-mono text-slate-400">ROE</span></span>
+              <span class="w-4 h-4 rounded-full border border-slate-200 group-hover:border-black group-hover:bg-black group-hover:text-white text-slate-400 flex items-center justify-center text-[10px] font-mono transition-all">?</span>
+            </div>
+            <div class="my-3"><span class="text-2xl font-bold font-mono tracking-tight text-black" id="cardRoeValue">--</span></div>
+            <div class="text-[11px] text-slate-400 font-mono">profit on owners' money</div>
+          </div>
+
+          <div class="glass-card p-5 rounded-2xl flex flex-col justify-between group cursor-pointer" onclick="openExplainer('current_ratio')">
+            <div class="flex items-center justify-between">
+              <span class="flex flex-col"><span class="text-xs font-medium text-slate-600">Can it pay bills?</span><span class="text-[10px] font-mono text-slate-400">Current ratio</span></span>
+              <span class="w-4 h-4 rounded-full border border-slate-200 group-hover:border-black group-hover:bg-black group-hover:text-white text-slate-400 flex items-center justify-center text-[10px] font-mono transition-all">?</span>
+            </div>
+            <div class="my-3"><span class="text-2xl font-bold font-mono tracking-tight text-black" id="cardCurrentRatioValue">--</span></div>
+            <div class="text-[11px] text-slate-400 font-mono">short-term safety</div>
+          </div>
+
+          <div class="glass-card p-5 rounded-2xl flex flex-col justify-between group cursor-pointer" onclick="openExplainer('quality_gate')">
+            <div class="flex items-center justify-between">
+              <span class="flex flex-col"><span class="text-xs font-medium text-slate-600">Health check</span><span class="text-[10px] font-mono text-slate-400">Quality gate</span></span>
+              <span class="w-4 h-4 rounded-full border border-slate-200 group-hover:border-black group-hover:bg-black group-hover:text-white text-slate-400 flex items-center justify-center text-[10px] font-mono transition-all">?</span>
+            </div>
+            <div class="my-3"><span class="text-xl font-bold tracking-tight font-mono" id="cardGateValue">--</span></div>
+            <div class="text-[11px] text-slate-400 font-mono">is the business sound?</div>
+          </div>
+        </div>
+
+        <div class="space-y-6">
+
+          <!-- TAB 1: THE CALL -->
+          <div id="tab-overview" class="tab-content active space-y-6">
+
+            <!-- Three pillars, colour-coded (item 3) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs" id="pillarGrid"></div>
+
+            <!-- Key financials charts (item 4) -->
+            <div class="bg-white rounded-3xl border border-[#EAECEF] p-6 space-y-5">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-black">The last few years, at a glance</h3>
+                <span class="text-[10px] font-mono text-slate-400" id="chartSourceNote">from annual filings</span>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <p class="text-[11px] text-slate-500 mb-2">Sales vs profit <span class="text-slate-400">(is it growing?)</span></p>
+                  <div class="h-48"><canvas id="chartRevenue"></canvas></div>
+                </div>
+                <div>
+                  <p class="text-[11px] text-slate-500 mb-2">Profit kept per $1 of sales <span class="text-slate-400">(getting more efficient?)</span></p>
+                  <div class="h-48"><canvas id="chartMargin"></canvas></div>
+                </div>
+                <div>
+                  <p class="text-[11px] text-slate-500 mb-2">Free cash flow <span class="text-slate-400">(real cash, not just paper profit)</span></p>
+                  <div class="h-48"><canvas id="chartFcf"></canvas></div>
+                  <p id="fcfEmpty" class="hidden h-48 flex items-center justify-center text-center text-[11px] text-slate-400 font-mono px-6">Cash-flow lines weren't itemised in this filing, so free cash flow can't be shown.</p>
+                </div>
+                <div>
+                  <div class="flex items-baseline justify-between mb-2">
+                    <p class="text-[11px] text-slate-500">Valuation &amp; key ratios <span class="text-slate-400">(is it cheap, and is it sound?)</span></p>
+                  </div>
+                  <div id="valSnapshot" class="h-48 overflow-y-auto pr-1 space-y-3"></div>
+                </div>
+              </div>
+              <p id="chartsUnavailable" class="hidden text-[11px] text-slate-400 font-mono">Multi-year history wasn't available for this ticker — showing what we have.</p>
+            </div>
+
+            <!-- What to actually do -->
+            <div class="p-6 bg-[#121214] text-white rounded-3xl space-y-2 shadow-sm">
+              <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                <span>What this means for you</span>
+                <span id="alignBadge" class="text-emerald-400">matched to your answers</span>
+              </div>
+              <p class="text-sm font-medium text-white/90 leading-relaxed" id="executionText"></p>
+              <p class="text-[11px] text-slate-400 leading-relaxed pt-1" id="profileAlignText"></p>
+            </div>
+          </div>
+
+          <!-- TAB 2: BUSINESS & 10-K -->
+          <div id="tab-quality" class="tab-content space-y-4 text-xs">
+            <!-- Business overview (item 7) -->
+            <div class="p-6 bg-white rounded-2xl border border-[#EAECEF] space-y-3">
+              <div class="flex items-center justify-between">
+                <h4 class="font-bold text-black text-sm">What this company actually does</h4>
+                <span class="text-[10px] font-mono text-slate-400">straight from the 10-K</span>
+              </div>
+              <p id="bizSummary" class="text-slate-600 leading-relaxed"></p>
+              <ul id="bizPoints" class="space-y-1.5 list-disc list-inside text-slate-700"></ul>
+              <div id="bizSegments" class="hidden pt-2 space-y-2">
+                <p class="text-[11px] text-slate-500">Where the money comes from</p>
+                <div id="bizSegmentBars" class="space-y-1.5"></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-5 bg-white rounded-2xl border border-[#EAECEF] space-y-2">
+                <h4 class="font-bold text-black text-sm">How the business is doing</h4>
+                <p id="tenkHealthSummary" class="text-slate-600 leading-relaxed"></p>
+                <ul id="tenkHealthPoints" class="space-y-1.5 list-disc list-inside text-slate-700 pt-2"></ul>
+              </div>
+              <div class="p-5 bg-white rounded-2xl border border-[#EAECEF] space-y-2">
+                <h4 class="font-bold text-black text-sm">What management says next — and the catch</h4>
+                <p id="tenkClaimsSummary" class="text-slate-600 leading-relaxed"></p>
+                <ul id="tenkClaimsPoints" class="space-y-1.5 list-disc list-inside text-slate-700 pt-2"></ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 3: THE NUMBERS -->
+          <div id="tab-valuation" class="tab-content space-y-4 text-xs">
+            <p class="text-slate-500">Tap any <span class="font-mono">?</span> to see what a number means in plain English.</p>
+            <div class="border border-[#EAECEF] rounded-2xl overflow-hidden bg-white">
+              <table class="w-full text-left">
+                <thead class="bg-[#F8F9FA] border-b border-[#EAECEF] text-slate-400 text-[10px] uppercase font-mono">
+                  <tr>
+                    <th class="p-3.5 font-semibold">What we checked</th>
+                    <th class="p-3.5 font-semibold">Healthy if</th>
+                    <th class="p-3.5 font-semibold">This company</th>
+                    <th class="p-3.5 font-semibold">Verdict</th>
+                    <th class="p-3.5 font-semibold w-8"></th>
+                  </tr>
+                </thead>
+                <tbody id="scorecardTableBody" class="divide-y divide-[#EAECEF] bg-white text-xs"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- TAB 4: MARKET MOOD -->
+          <div id="tab-market" class="tab-content space-y-4 text-xs">
+            <p id="marketSenseSummary" class="text-slate-600 leading-relaxed bg-white p-5 rounded-2xl border border-[#EAECEF]"></p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-5 bg-white rounded-2xl border border-[#EAECEF] space-y-2">
+                <h4 class="font-bold text-black text-sm">Tailwinds <span class="text-[10px] font-mono text-slate-400 font-normal">helping it along</span></h4>
+                <ul id="tailwindsList" class="space-y-2 text-slate-700 pt-1"></ul>
+              </div>
+              <div class="p-5 bg-white rounded-2xl border border-[#EAECEF] space-y-2">
+                <h4 class="font-bold text-black text-sm">Headwinds <span class="text-[10px] font-mono text-slate-400 font-normal">working against it</span></h4>
+                <ul id="headwindsList" class="space-y-2 text-slate-700 pt-1"></ul>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Explainer modal -->
+  <div id="explainerModal" class="hidden fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4" onclick="closeExplainer()">
+    <div class="bg-white max-w-md w-full rounded-3xl p-6 border border-[#EAECEF] shadow-2xl space-y-4" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between border-b border-[#EAECEF] pb-3">
+        <h3 id="modalTitle" class="text-sm font-bold text-black">What this means</h3>
+        <button onclick="closeExplainer()" class="w-6 h-6 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-black font-mono text-sm transition">&times;</button>
+      </div>
+      <div class="space-y-3 text-xs leading-relaxed">
+        <div>
+          <span class="text-slate-400 font-mono text-[10px] uppercase tracking-wider block">In plain English</span>
+          <p id="modalPlain" class="font-medium text-slate-800 mt-0.5"></p>
+        </div>
+        <div>
+          <span class="text-slate-400 font-mono text-[10px] uppercase tracking-wider block">How it's worked out</span>
+          <p id="modalCalculation" class="font-mono bg-[#F8F9FA] p-2.5 rounded-xl border border-[#EAECEF] text-slate-900 mt-0.5 text-[11px]"></p>
+        </div>
+        <div>
+          <span class="text-slate-400 font-mono text-[10px] uppercase tracking-wider block">Why it matters</span>
+          <p id="modalContext" class="text-slate-600 mt-0.5"></p>
+        </div>
+      </div>
+      <button onclick="closeExplainer()" class="w-full py-2.5 bg-black text-white text-xs font-semibold rounded-xl hover:bg-slate-800 transition active:scale-[0.98]">Got it</button>
+    </div>
+  </div>
+
+  <footer class="border-t border-[#EAECEF] bg-white py-12 px-6 mt-16 text-center">
+    <div class="max-w-2xl mx-auto space-y-2 text-[11px] text-slate-400 leading-relaxed">
+      <p class="font-medium text-slate-600">A study aid, not financial advice</p>
+      <p>Every investment can lose money. This tool explains public filings to help you learn — it isn't investment, financial, tax, or legal advice, and it isn't a recommendation to buy or sell anything. Do your own research or talk to a licensed adviser before investing.</p>
+    </div>
+  </footer>
+
+  <script>
+    /* ---------- Tab controller ---------- */
+    document.querySelectorAll('.nav-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(b => {
+          b.classList.remove('active', 'text-black', 'bg-white', 'shadow-sm');
+          b.classList.add('text-slate-500');
+        });
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        btn.classList.add('active', 'text-black', 'bg-white', 'shadow-sm');
+        btn.classList.remove('text-slate-500');
+        document.getElementById(btn.dataset.target).classList.add('active');
+      });
+    });
+
+    /* ---------- Signal → colour helpers (item 3) ---------- */
+    const SIGNAL_STYLE = {
+      strong:  { ring: 'border-emerald-200', bg: 'bg-emerald-50/50', chip: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', label: 'Looks good' },
+      neutral: { ring: 'border-amber-200',   bg: 'bg-amber-50/40',   chip: 'bg-amber-100 text-amber-700',     dot: 'bg-amber-500',   label: 'Mixed' },
+      weak:    { ring: 'border-rose-200',    bg: 'bg-rose-50/40',    chip: 'bg-rose-100 text-rose-600',       dot: 'bg-rose-500',    label: 'Be careful' },
+      unknown: { ring: 'border-slate-200',   bg: 'bg-slate-50',      chip: 'bg-slate-100 text-slate-500',     dot: 'bg-slate-400',   label: 'Not enough data' },
+    };
+    function pillarCard(title, p) {
+      const s = SIGNAL_STYLE[(p.signal || 'unknown').toLowerCase()] || SIGNAL_STYLE.unknown;
+      const bullets = (p.bullets || []).slice(0, 3)
+        .map(b => `<li class="flex gap-1.5"><span class="mt-1 w-1 h-1 rounded-full ${s.dot} shrink-0"></span><span>${b}</span></li>`).join('');
+      return `
+        <div class="p-5 rounded-2xl border ${s.ring} ${s.bg} space-y-2.5">
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold text-black text-sm">${title}</h4>
+            <span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.chip}">
+              <span class="w-1.5 h-1.5 rounded-full ${s.dot}"></span>${s.label}
+            </span>
+          </div>
+          <p class="text-slate-600 leading-relaxed">${p.verdict || ''}</p>
+          <ul class="space-y-1 text-slate-600">${bullets}</ul>
+        </div>`;
+    }
+
+    /* ---------- Chart helpers (item 4) ---------- */
+    let CHARTS = {};
+    const fmtB = v => (v == null ? '—' : '$' + (v/1e9).toFixed(0) + 'B');
+    function destroyCharts(){ Object.values(CHARTS).forEach(c => c && c.destroy()); CHARTS = {}; }
+    const AXIS = { grid: { color: '#EEF0F2' }, ticks: { color: '#94A3B8', font: { family: 'JetBrains Mono', size: 10 } } };
+    const NOGRID = { grid: { display:false }, ticks: { color: '#94A3B8', font: { family: 'JetBrains Mono', size: 10 } } };
+
+    function renderCharts(fin) {
+      destroyCharts();
+      const t = fin && fin.trends ? fin.trends : null;
+      const hasTrend = t && Array.isArray(t.years) && t.years.length >= 2;
+      document.getElementById('chartsUnavailable').classList.toggle('hidden', !!hasTrend);
+
+      if (hasTrend) {
+        CHARTS.rev = new Chart(document.getElementById('chartRevenue'), {
+          type: 'bar',
+          data: { labels: t.years, datasets: [
+            { label: 'Sales', data: t.revenue, backgroundColor: '#0D0D0D', borderRadius: 4, order: 2 },
+            { label: 'Profit', data: t.net_income, type: 'line', borderColor: '#10B981', backgroundColor: '#10B981', tension: .3, borderWidth: 2, pointRadius: 3, order: 1 },
+          ]},
+          options: chartOpts(v => fmtB(v))
+        });
+        CHARTS.margin = new Chart(document.getElementById('chartMargin'), {
+          type: 'line',
+          data: { labels: t.years, datasets: [
+            { label: 'Profit kept', data: (t.net_margin||[]).map(x => x==null?null:+(x*100).toFixed(1)), borderColor: '#0D0D0D', backgroundColor: 'rgba(13,13,13,.06)', fill: true, tension: .3, borderWidth: 2, pointRadius: 3 },
+          ]},
+          options: chartOpts(v => v + '%')
+        });
+        // Free cash flow — only draw if at least one real value exists.
+        const fcf = t.fcf || [];
+        const hasFcf = fcf.some(v => v != null);
+        document.getElementById('chartFcf').classList.toggle('hidden', !hasFcf);
+        document.getElementById('fcfEmpty').classList.toggle('hidden', hasFcf);
+        if (hasFcf) {
+          CHARTS.fcf = new Chart(document.getElementById('chartFcf'), {
+            type: 'bar',
+            data: { labels: t.years, datasets: [
+              { label: 'Free cash flow', data: fcf, backgroundColor: fcf.map(v => v < 0 ? '#F43F5E' : '#3B82F6'), borderRadius: 4 },
+            ]},
+            options: chartOpts(v => fmtB(v))
+          });
+        }
+      } else {
+        // No multi-year history at all: show the FCF empty note in that slot.
+        document.getElementById('chartFcf').classList.add('hidden');
+        document.getElementById('fcfEmpty').classList.remove('hidden');
+      }
+    }
+    function chartOpts(fmt) {
+      return {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { boxWidth: 10, font: { family:'Inter', size: 11 }, color:'#475569' }, position: 'bottom' },
+          tooltip: { callbacks: { label: c => ` ${c.dataset.label ? c.dataset.label+': ' : ''}${fmt(c.parsed.y)}` } }
+        },
+        scales: { x: NOGRID, y: { ...AXIS, ticks: { ...AXIS.ticks, callback: fmt } } }
+      };
+    }
+
+    /* ---------- Valuation + key-ratios snapshot (always populated) ---------- */
+    function renderValuationSnapshot(data) {
+      const el = document.getElementById('valSnapshot'); if (!el) return;
+      const val = (data.financials && data.financials.valuation) || {};
+      const parts = [];
+
+      const stat = (label, v, cls) =>
+        `<div class="flex-1 min-w-[64px]"><div class="text-[10px] font-mono text-slate-400">${label}</div><div class="text-sm font-bold font-mono ${cls || 'text-black'}">${v}</div></div>`;
+      const price  = val.current_price != null ? '$' + val.current_price : '\u2014';
+      const target = val.target_price  != null ? '$' + val.target_price  : '\u2014';
+      let upTxt = '\u2014', upCls = 'text-slate-400';
+      if (val.implied_upside_pct != null) {
+        const up = val.implied_upside_pct;
+        upTxt = (up >= 0 ? '+' : '') + up + '%';
+        upCls = up >= 0 ? 'text-emerald-600' : 'text-rose-600';
+      }
+      const anyVal = val.current_price != null || val.target_price != null;
+      parts.push(`<div class="rounded-xl border border-[#EAECEF] bg-[#FBFBFC] p-3">
+        <div class="flex gap-3">${stat('Price', price)}${stat('Analyst target', target)}${stat('Upside', upTxt, upCls)}</div>
+        ${anyVal ? '' : '<div class="text-[10px] text-slate-400 mt-1.5 font-mono">Live price &amp; analyst targets not available for this ticker.</div>'}
+      </div>`);
+
+      // Deterministic 10-K ratios — these are essentially always present.
+      let rows = (data.risk.scorecard || []).filter(s => s.status === 'PASS' || s.status === 'FAIL');
+      if (!rows.length) {
+        const m = data.risk.metrics || {}, prof = m.profitability || {}, liq = m.liquidity || {}, solv = m.solvency_and_leverage || {};
+        rows = [
+          { metric: 'Net Profit Margin', benchmark: '\u2265 15%', actual: prof.net_margin_formatted, status: null },
+          { metric: 'Return on Equity (ROE)', benchmark: '\u2265 15%', actual: prof.roe_formatted, status: null },
+          { metric: 'Current Ratio', benchmark: '\u2265 1.5x', actual: liq.current_ratio != null ? liq.current_ratio + 'x' : null, status: null },
+          { metric: 'Debt-to-Equity', benchmark: '\u2264 1.5x', actual: solv.debt_to_equity != null ? solv.debt_to_equity + 'x' : null, status: null },
+        ].filter(r => r.actual && r.actual !== 'N/A');
+      }
+      rows.slice(0, 5).forEach(r => {
+        const dot = r.status === 'PASS' ? 'bg-emerald-500' : r.status === 'FAIL' ? 'bg-rose-500' : 'bg-slate-300';
+        parts.push(`<div class="flex items-center justify-between gap-2 px-1">
+          <div class="min-w-0"><div class="text-[11px] font-medium text-slate-700 truncate">${r.metric}</div><div class="text-[10px] font-mono text-slate-400">healthy ${r.benchmark}</div></div>
+          <div class="flex items-center gap-2 shrink-0"><span class="text-xs font-bold font-mono">${r.actual}</span><span class="w-2 h-2 rounded-full ${dot}"></span></div>
+        </div>`);
+      });
+      el.innerHTML = parts.join('');
+    }
+
+    /* ---------- Keyword / figure highlighter (scannable long text) ---------- */
+    function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+    // Bold every $ amount, %, and x-multiple; colour a tight set of clearly
+    // positive / negative terms. Order matters: figures first, then keywords
+    // (class strings deliberately avoid any highlighted word).
+    const POS_RE = /\b(grew|rose|surged?|soar(?:ed)?|record|growth|expansion|expanded|strong|robust|accelerat(?:ed|ing)|improv(?:ed|ing)|outperform(?:ed)?)\b/gi;
+    const NEG_RE = /\b(declin(?:e|ed|ing)|fell|drop(?:ped)?|weak(?:er|ness)?|loss(?:es)?|pressure|impair(?:ment|ed)?|slowdown|shortfall|litigation|headwinds?|restrictions?)\b/gi;
+    const FIG_RE = /(\$\d[\d,]*(?:\.\d+)?\s?(?:billion|million|trillion|bn|B|M|T)?\b|[+-]?\d[\d,]*(?:\.\d+)?%|\d[\d,]*(?:\.\d+)?x\b)/g;
+    function highlight(text, dark) {
+      if (!text) return '';
+      const strong = dark ? 'font-semibold text-white' : 'font-semibold text-black';
+      const pos = dark ? 'font-semibold text-emerald-400' : 'font-semibold text-emerald-600';
+      const neg = dark ? 'font-semibold text-red-400' : 'font-semibold text-red-500';
+      let h = esc(text);
+      h = h.replace(FIG_RE, m => `<span class="${strong}">${m}</span>`);
+      h = h.replace(POS_RE, m => `<span class="${pos}">${m}</span>`);
+      h = h.replace(NEG_RE, m => `<span class="${neg}">${m}</span>`);
+      return h;
+    }
+    const hi = (t) => highlight(t, false);          // light background
+    const hiDark = (t) => highlight(t, true);       // dark banner
+
+    /* ---------- Render everything ---------- */
+    function renderDashboard(data) {
+      document.getElementById('activeTickerBadge').innerText = `${data.ticker} live`;
+      document.getElementById('heroTickerTitle').innerText = data.ticker;
+
+      const verdict = (data.advisor.verdict || 'HOLD').toUpperCase();
+      const vb = document.getElementById('heroVerdictBadge');
+      vb.innerText = verdict;
+      const vmap = { BUY:'bg-emerald-50 text-emerald-700 border-emerald-200/50', HOLD:'bg-amber-50 text-amber-700 border-amber-200/50', SELL:'bg-rose-50 text-rose-600 border-rose-200/50' };
+      vb.className = `text-xs font-bold font-mono px-3 py-1 rounded-full border ${vmap[verdict] || vmap.HOLD}`;
+      document.getElementById('heroConvictionBadge').innerText = `${(data.advisor.conviction||'medium').toLowerCase()} confidence`;
+
+      const upside = data.advisor.implied_upside || '—';
+      const uv = document.getElementById('heroUpsideValue');
+      uv.innerText = upside;
+      uv.className = 'text-2xl font-bold font-mono tracking-tight ' + (String(upside).trim().startsWith('-') ? 'text-rose-600' : 'text-emerald-600');
+
+      // Cards
+      const m = data.risk.metrics || {};
+      const prof = m.profitability || {}, liq = m.liquidity || {};
+      document.getElementById('cardMarginValue').innerText = prof.net_margin_formatted || '—';
+      document.getElementById('cardRoeValue').innerText = prof.roe_formatted || '—';
+      document.getElementById('cardCurrentRatioValue').innerText = (liq.current_ratio != null ? liq.current_ratio + 'x' : '—');
+      const gatePass = data.advisor.quality_gate.passed;
+      const gv = document.getElementById('cardGateValue');
+      gv.innerText = gatePass ? 'Healthy' : 'Shaky';
+      gv.className = 'text-xl font-bold tracking-tight font-mono ' + (gatePass ? 'text-emerald-600' : 'text-rose-600');
+
+      // Pillars (item 3) — server sends signal + verdict + bullets; fall back gracefully
+      const A = data.advisor;
+      const grid = document.getElementById('pillarGrid');
+      grid.innerHTML =
+        pillarCard('Is it a good business?', {
+          signal: A.quality_gate.signal || (A.quality_gate.passed ? 'strong' : 'weak'),
+          verdict: A.quality_gate.verdict || A.quality_gate.assessment,
+          bullets: A.quality_gate.bullets
+        }) +
+        pillarCard('Is the price fair?', {
+          signal: A.valuation_assessment.signal || 'neutral',
+          verdict: A.valuation_assessment.verdict || A.valuation_assessment.assessment,
+          bullets: A.valuation_assessment.bullets
+        }) +
+        pillarCard('Do the numbers back the story?', {
+          signal: A.narrative_integrity.signal || 'neutral',
+          verdict: A.narrative_integrity.verdict || A.narrative_integrity.assessment,
+          bullets: A.narrative_integrity.bullets
+        });
+
+      document.getElementById('executionText').innerHTML = hiDark(A.actionable_execution || '');
+      document.getElementById('profileAlignText').innerHTML = hiDark(A.profile_alignment || '');
+
+      // Charts + valuation/ratios snapshot (item 4)
+      renderCharts(data.financials || {});
+      renderValuationSnapshot(data);
+
+      // Business overview (item 7)
+      const biz = (data.tenk && data.tenk.business_overview) || {};
+      document.getElementById('bizSummary').innerHTML = hi(biz.summary || 'A plain-English summary wasn\u2019t available for this filing.');
+      document.getElementById('bizPoints').innerHTML = (biz.bullets || []).map(p => `<li>${hi(p)}</li>`).join('');
+      const segWrap = document.getElementById('bizSegments');
+      if (biz.segments && biz.segments.length) {
+        segWrap.classList.remove('hidden');
+        document.getElementById('bizSegmentBars').innerHTML = biz.segments.map(s => `
+          <div>
+            <div class="flex justify-between text-[11px] text-slate-500 mb-0.5"><span>${s.name}</span><span class="font-mono">${s.pct}%</span></div>
+            <div class="w-full bg-slate-100 rounded-full h-2"><div class="bg-black h-2 rounded-full" style="width:${Math.max(2,Math.min(100,s.pct))}%"></div></div>
+          </div>`).join('');
+      } else { segWrap.classList.add('hidden'); }
+
+      // 10-K blocks
+      const fh = data.tenk.financial_health || {}, mc = data.tenk.management_claims || {};
+      document.getElementById('tenkHealthSummary').innerHTML = hi(fh.summary || '');
+      document.getElementById('tenkHealthPoints').innerHTML = (fh.key_points || []).map(p => `<li>${hi(p)}</li>`).join('');
+      document.getElementById('tenkClaimsSummary').innerHTML = hi(mc.summary || '');
+      document.getElementById('tenkClaimsPoints').innerHTML = (mc.key_points || []).map(p => `<li>${hi(p)}</li>`).join('');
+
+      // Numbers table (item 6) — build an expanded, plain-language scorecard
+      renderScorecard(m, data.risk.scorecard || []);
+
+      // Market mood
+      document.getElementById('marketSenseSummary').innerHTML = hi(data.market.summary || '');
+      document.getElementById('tailwindsList').innerHTML = (data.market.tailwinds || []).map(t =>
+        `<li class="flex gap-2"><span class="text-emerald-500">↗</span><span><span class="font-semibold text-black">${esc(t.factor)}</span> <span class="text-slate-500 font-normal">— ${hi(t.reason)}</span></span></li>`).join('') || '<li class="text-slate-400">No clear tailwinds found.</li>';
+      document.getElementById('headwindsList').innerHTML = (data.market.headwinds || []).map(h =>
+        `<li class="flex gap-2"><span class="text-red-500">↘</span><span><span class="font-semibold text-black">${esc(h.factor)}</span> <span class="text-slate-500 font-normal">— ${hi(h.reason)}</span></span></li>`).join('') || '<li class="text-slate-400">No clear headwinds found.</li>';
+    }
+
+    /* ---------- Expanded numbers table with plain-English rows (item 6) ---------- */
+    function renderScorecard(m, backendScorecard) {
+      const prof = m.profitability || {}, liq = m.liquidity || {}, solv = m.solvency_and_leverage || {}, cf = m.cash_flow_and_quality || {}, cons = m.market_consensus || {};
+      // Prefer the backend's own scorecard rows (they carry PASS/FAIL); then append extra context rows.
+      const rows = [];
+      (backendScorecard || []).forEach(s => rows.push({
+        label: s.metric, benchmark: s.benchmark, actual: s.actual, status: s.status, key: METRIC_KEY[s.metric]
+      }));
+      // Extra rows the backend already computes but doesn't gate on:
+      const extra = [
+        ['Operating Margin', prof.operating_margin_formatted, 'op_margin'],
+        ['Return on Assets (ROA)', prof.roa_formatted, 'roa'],
+        ['Quick Ratio', liq.quick_ratio != null ? liq.quick_ratio + 'x' : null, 'quick'],
+        ['Free Cash Flow', cf.free_cash_flow_formatted, 'fcf'],
+        ['Analyst Target Price', cons.target_price_mean, 'target'],
+      ];
+      extra.forEach(([label, val, key]) => { if (val && val !== 'N/A') rows.push({ label, benchmark: '—', actual: val, status: 'INFO', key }); });
+
+      const badge = st => st === 'PASS' ? 'bg-emerald-50 text-emerald-700' : st === 'FAIL' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500';
+      const word  = st => st === 'PASS' ? 'Healthy' : st === 'FAIL' ? 'Weak' : 'FYI';
+      document.getElementById('scorecardTableBody').innerHTML = rows.map(r => `
+        <tr class="hover:bg-[#F8F9FA] transition">
+          <td class="p-3.5 font-semibold text-black">${r.label}</td>
+          <td class="p-3.5 text-slate-400 font-mono">${r.benchmark}</td>
+          <td class="p-3.5 font-bold font-mono">${r.actual}</td>
+          <td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${badge(r.status)}">${word(r.status)}</span></td>
+          <td class="p-3.5 text-center">${r.key ? `<button onclick="openExplainer('${r.key}')" class="w-4 h-4 rounded-full border border-slate-200 hover:border-black hover:bg-black hover:text-white text-slate-400 text-[10px] font-mono transition">?</button>` : ''}</td>
+        </tr>`).join('');
+    }
+
+    // Map backend metric names → explainer keys for the "?" tooltips
+    const METRIC_KEY = {
+      'Net Profit Margin': 'margin', 'Return on Equity (ROE)': 'roe', 'Current Ratio': 'current_ratio',
+      'Debt-to-Equity': 'debt_equity', 'Cash Conversion': 'cash_conversion',
+    };
+
+    /* ---------- Plain-English explainers (item 5 & 6) ---------- */
+    const METRIC_EXPLANATIONS = {
+      margin: { title: 'Profit kept per $1 of sales', plain: 'For every $1 the company sells, this is how much it keeps as profit after all costs.', calculation: 'Profit ÷ Sales', context: 'Higher means it can charge good prices and control costs. Above ~15% is generally strong.' },
+      roe: { title: 'Return on owners\u2019 money', plain: 'How much profit the company makes on the money shareholders have put in.', calculation: 'Profit ÷ Shareholders\u2019 money', context: 'It shows how well management grows the money entrusted to them. Above ~15% is a good sign.' },
+      current_ratio: { title: 'Can it pay its short-term bills?', plain: 'Whether the company has enough cash and near-cash to cover what it owes within a year.', calculation: 'Short-term assets ÷ Short-term bills', context: 'Above 1.5x is a comfortable cushion. Below 1x can mean cash-flow stress.' },
+      debt_equity: { title: 'How much it borrows', plain: 'How much debt the company uses compared with owners\u2019 money.', calculation: 'Total debt ÷ Shareholders\u2019 money', context: 'Lower is safer. Under 1.5x is usually manageable; very high debt is risky in downturns.' },
+      cash_conversion: { title: 'Profit that turns into real cash', plain: 'How much of the reported profit actually shows up as cash in the bank.', calculation: 'Operating cash ÷ Profit', context: 'Near or above 100% means profits are real, not just accounting entries. Low numbers are a red flag.' },
+      op_margin: { title: 'Operating margin', plain: 'Profit from the core business, before interest and tax.', calculation: 'Operating profit ÷ Sales', context: 'Strips out one-offs and financing — a cleaner read on the day-to-day business.' },
+      roa: { title: 'Return on assets', plain: 'Profit made on everything the company owns.', calculation: 'Profit ÷ Total assets', context: 'Useful for asset-heavy businesses. Higher means assets are used efficiently.' },
+      quick: { title: 'Quick ratio', plain: 'The strict cash test — can it pay short-term bills without selling inventory?', calculation: '(Cash + receivables) ÷ Short-term bills', context: 'Tougher than the current ratio. Above 1x is reassuring.' },
+      fcf: { title: 'Free cash flow', plain: 'Spare cash left after running the business and buying equipment.', calculation: 'Operating cash − equipment spending', context: 'This is the cash a company can use for dividends, buybacks, or paying down debt.' },
+      target: { title: 'Analyst target price', plain: 'The average price Wall Street analysts expect the stock to reach.', calculation: 'Average of published analyst targets', context: 'A rough gauge of upside — but analysts are often wrong, so treat it as one input, not gospel.' },
+      quality_gate: { title: 'The health check', plain: 'A first filter: is the business financially sound before we even talk price?', calculation: 'Passes when most core checks (profitability, debt, liquidity, cash) look healthy', context: 'If the business fails the health check, we won\u2019t call it a Buy — even if it looks cheap. That\u2019s how we avoid value traps.' },
+    };
+    function openExplainer(key) {
+      const info = METRIC_EXPLANATIONS[key]; if (!info) return;
+      document.getElementById('modalTitle').innerText = info.title;
+      document.getElementById('modalPlain').innerText = info.plain;
+      document.getElementById('modalCalculation').innerText = info.calculation;
+      document.getElementById('modalContext').innerText = info.context;
+      document.getElementById('explainerModal').classList.remove('hidden');
+    }
+    function closeExplainer() { document.getElementById('explainerModal').classList.add('hidden'); }
+
+    /* ---------- Streaming terminal loader (item 8) ---------- */
+    const STAGE_OF = { fetch_10k: 1, risk: 2, market: 3, advisor: 4, done: 4 };
+    function resetLoader() {
+      document.getElementById('termLog').innerHTML = '';
+      document.getElementById('loadingPercentage').innerText = '0%';
+      for (let i = 1; i <= 4; i++) document.getElementById('stage-' + i).classList.remove('text-emerald-400', 'border-emerald-500');
+    }
+    function ts() { const d = new Date(); return d.toTimeString().slice(0, 8); }
+    function logLine(msg, kind) {
+      const el = document.getElementById('termLog');
+      const colour = kind === 'ok' ? 'text-emerald-400' : kind === 'warn' ? 'text-amber-400' : kind === 'err' ? 'text-rose-400' : 'text-slate-300';
+      const arrow = kind === 'ok' ? '✓' : kind === 'warn' ? '!' : kind === 'err' ? '✗' : '›';
+      el.insertAdjacentHTML('beforeend',
+        `<div class="ln"><span class="text-slate-600">${ts()}</span> <span class="${colour}">${arrow}</span> <span class="${colour}">${msg}</span></div>`);
+      el.scrollTop = el.scrollHeight;
+    }
+    function markStage(stage, pct) {
+      if (stage) for (let i = 1; i <= stage; i++) document.getElementById('stage-' + i).classList.add('text-emerald-400', 'border-emerald-500');
+      if (pct != null) document.getElementById('loadingPercentage').innerText = Math.round(pct) + '%';
+    }
+
+    /* ---------- Submit ---------- */
+    document.getElementById('analyzeForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+      const isMock = document.getElementById('mockToggle').checked;
+
+      document.getElementById('emptyView').classList.add('hidden');
+      document.getElementById('dashboardView').classList.add('hidden');
+      document.getElementById('loadingComponent').classList.remove('hidden');
+      resetLoader();
+
+      const profile = {
+        experience: document.getElementById('experience').value,
+        drawdown_reaction: document.getElementById('drawdown_reaction').value,
+        ownership: document.getElementById('ownership').value,      // item 1 — now wired through
+        horizon: document.getElementById('horizon').value,
+        position_size: document.getElementById('position_size').value,
+        goal: document.getElementById('goal').value,
+      };
+
+      try {
+        const data = isMock ? await runMockStream(ticker) : await runLiveStream(ticker, profile);
+        renderDashboard(data);
+        document.getElementById('loadingComponent').classList.add('hidden');
+        document.getElementById('dashboardView').classList.remove('hidden');
+      } catch (err) {
+        logLine('Something went wrong: ' + err.message, 'err');
+        logLine('Tip: switch on Demo mode (top-right) to run without a live connection.', 'warn');
+      }
+    });
+
+    /* Live: consume the NDJSON stream from /api/analyze/stream */
+    async function runLiveStream(ticker, profile) {
+      const resp = await fetch('/api/analyze/stream', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, profile })
+      });
+      if (!resp.ok || !resp.body) throw new Error('backend unavailable (HTTP ' + resp.status + ')');
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '', result = null;
+      logLine(`booting agents for ${ticker}…`);
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim(); buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let evt; try { evt = JSON.parse(line); } catch { continue; }
+          if (evt.type === 'log') { logLine(evt.message, evt.level); markStage(STAGE_OF[evt.stage], evt.pct); }
+          else if (evt.type === 'result') { result = evt.data; markStage(4, 100); logLine('done — building your report', 'ok'); }
+          else if (evt.type === 'error') { throw new Error(evt.message); }
+        }
+      }
+      if (!result) throw new Error('stream ended without a result');
+      await new Promise(r => setTimeout(r, 300));
+      return result;
+    }
+
+    /* Demo: same terminal feel, no network — for the video (item 8) */
+    async function runMockStream(ticker) {
+      const script = [
+        [0,   'fetch_10k', 'log',  `resolving ${ticker} on SEC EDGAR…`, null, 5],
+        [420, 'fetch_10k', 'ok',   `pulled latest 10-K (FY2026, filed 2026-02-26)`, 'ok', 25],
+        [260, 'risk',      'log',  'reading balance sheet & income statement…', null, 32],
+        [380, 'risk',      'ok',   'computed 11 ratios · health check: PASSED', 'ok', 52],
+        [240, 'market',    'log',  'scanning macro (FRED) & recent headlines…', null, 62],
+        [360, 'market',    'warn', 'no news API key set — using filing signals only', 'warn', 74],
+        [260, 'advisor',   'log',  'portfolio-manager layer weighing 4 pillars…', null, 84],
+        [420, 'advisor',   'ok',   'gated call formed · confidence: HIGH', 'ok', 96],
+        [220, 'done',      'ok',   'done — building your report', 'ok', 100],
+      ];
+      logLine(`booting agents for ${ticker}…`);
+      for (const [wait, stage, , msg, level, pct] of script) {
+        await new Promise(r => setTimeout(r, wait));
+        logLine(msg, level); markStage(STAGE_OF[stage], pct);
+      }
+      await new Promise(r => setTimeout(r, 300));
+      return SAMPLE_DATA;
+    }
+
+    /* ---------- Demo dataset: rich enough to show every feature offline ---------- */
+    const SAMPLE_DATA = {
+      ticker: 'NVDA',
+      advisor: {
+        verdict: 'BUY', conviction: 'HIGH', implied_upside: '+24.2%',
+        quality_gate: {
+          passed: true, signal: 'strong',
+          verdict: 'A genuinely strong business — it passes every core health check.',
+          bullets: ['Keeps 55.6¢ of every sales dollar as profit', 'Barely uses debt (0.31x)', 'Easily covers its short-term bills (3.9x)']
+        },
+        valuation_assessment: {
+          status: 'FAIR', signal: 'neutral',
+          verdict: 'Not a bargain, but analysts still see room above today\u2019s price.',
+          bullets: ['Trades at $228 vs a $326 average target', 'That\u2019s about +24% of possible upside', 'Priced for continued fast growth']
+        },
+        narrative_integrity: {
+          credibility: 'HIGH', signal: 'strong',
+          verdict: 'Management\u2019s story matches the audited numbers — with one honest risk they flag themselves.',
+          bullets: ['65% sales growth is real and audited', 'They openly disclose the China export hit', 'No sign of spin the numbers don\u2019t support']
+        },
+        actionable_execution: 'If you buy, start small and add over time. A 5–10% slice fits a long-term growth goal like yours. Expect a bumpy ride around China-export headlines.',
+        profile_alignment: 'You said you\u2019d hold 5+ years and buy more on a dip — that\u2019s exactly the temperament this volatile-but-strong stock rewards.'
+      },
+      risk: {
+        signal: 'positive',
+        metrics: {
+          profitability: { net_margin_formatted: '55.6%', roe_formatted: '76.3%', operating_margin_formatted: '60.4%', roa_formatted: '58.1%' },
+          liquidity: { current_ratio: 3.91, quick_ratio: 3.24 },
+          solvency_and_leverage: { debt_to_equity: 0.31 },
+          cash_flow_and_quality: { free_cash_flow_formatted: '$60.85B', cash_conversion_formatted: '85.5%' },
+          market_consensus: { target_price_mean: '$325.99', current_price: '$228.45' }
+        },
+        scorecard: [
+          { category: 'Profitability', metric: 'Net Profit Margin', benchmark: '≥ 15%', actual: '55.6%', status: 'PASS' },
+          { category: 'Profitability', metric: 'Return on Equity (ROE)', benchmark: '≥ 15%', actual: '76.3%', status: 'PASS' },
+          { category: 'Liquidity', metric: 'Current Ratio', benchmark: '≥ 1.5x', actual: '3.91x', status: 'PASS' },
+          { category: 'Solvency', metric: 'Debt-to-Equity', benchmark: '≤ 1.5x', actual: '0.31x', status: 'PASS' },
+          { category: 'Cash', metric: 'Cash Conversion', benchmark: '≥ 80%', actual: '85.5%', status: 'PASS' },
+        ]
+      },
+      financials: {
+        trends: {
+          years: ['FY22', 'FY23', 'FY24', 'FY25', 'FY26'],
+          revenue:    [26910000000, 26974000000, 60922000000, 130497000000, 215940000000],
+          net_income: [9752000000, 4368000000, 29760000000, 72880000000, 120070000000],
+          net_margin: [0.362, 0.162, 0.489, 0.559, 0.556],
+          fcf:        [8130000000, 3810000000, 27020000000, 60850000000, 72100000000]
+        },
+        valuation: { current_price: 228.45, target_price: 325.99, implied_upside_pct: 24.2, pe: 46.6 }
+      },
+      tenk: {
+        business_overview: {
+          summary: 'NVIDIA designs the chips (GPUs) and software that power modern AI, gaming, and data centers. It doesn\u2019t build its own factories — it designs the chips and has partners manufacture them.',
+          bullets: ['Sells mostly to big cloud and data-center customers', 'Data Center is now the vast majority of sales', 'Also sells gaming, professional visualization, and automotive chips'],
+          segments: [
+            { name: 'Data Center', pct: 88 },
+            { name: 'Gaming', pct: 9 },
+            { name: 'Professional & Auto', pct: 3 }
+          ]
+        },
+        financial_health: {
+          summary: 'A standout year: sales and profit both jumped 65%, driven by AI and data-center demand. One watch item — profit margins dipped slightly on a large inventory charge tied to China restrictions.',
+          key_points: ['Sales rose 65% to $215.9B; Data Center up 68%', 'Profit rose 65% to $120.1B', 'The business generated $102.7B of operating cash']
+        },
+        management_claims: {
+          summary: 'Great results, but management is upfront about a real problem: US export controls have effectively shut them out of China\u2019s data-center market, costing $4.5B.',
+          key_points: ['One customer is 22% of sales — a concentration risk', 'A $4.5B charge came from China export rules', 'Manufacturing is concentrated in Asia']
+        }
+      },
+      market: {
+        signal: 'neutral',
+        summary: 'The bigger picture is broadly supportive: big cloud companies keep spending heavily on AI infrastructure, though higher interest rates and export politics add uncertainty.',
+        tailwinds: [{ factor: 'Cloud AI spending', reason: 'the biggest cloud firms keep raising infrastructure budgets' }],
+        headwinds: [{ factor: 'Export restrictions', reason: 'rules on advanced chips limit sales into China' }]
+      }
+    };
+  </script>
+</body>
+</html>
